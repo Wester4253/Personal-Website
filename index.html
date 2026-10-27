@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Website</title>
+<link rel="shortcut icon" type="image/x-icon" href="favicon.ico">
+<meta name="description" content="Noa Butterfield — westr42.xyz. Links, contact, and a shell.">
+<meta name="referrer" content="origin">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<style>
+    /* gruvbox x tokyo-night hybrid — flat, no glow, no gradients */
+    :root {
+        --bg: #1a1b26;
+        --fg: #cfc9bd;
+        --bright: #ebdbb2;
+        --dim: #6b7291;
+        --purple: #bb9af7;
+        --aqua: #8ec07c;
+        --yellow: #d8a657;
+        --red: #f7768e;
+        --green: #9ece6a;
+        --sel: #2b3352;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html { background: var(--bg); }
+    body {
+        background: var(--bg);
+        color: var(--fg);
+        font-family: ui-monospace, "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+        font-size: 15px;
+        line-height: 1.55;
+        padding: 1.25rem;
+        min-height: 100vh;
+    }
+
+    ::selection { background: var(--sel); color: var(--bright); }
+
+    .term { max-width: 82ch; margin: 0 auto; }
+
+    .line { white-space: pre-wrap; word-break: break-word; min-height: 1em; animation: line-in .22s ease-out both; }
+    .line.fading { opacity: 0 !important; transition: opacity .4s ease; }
+    @keyframes line-in { from { opacity: 0; } to { opacity: 1; } }
+    .line a {
+        color: var(--aqua);
+        text-decoration: underline;
+        text-decoration-style: dotted;
+        text-underline-offset: 3px;
+        cursor: pointer;
+    }
+    .line a:hover { background: var(--aqua); color: var(--bg); text-decoration: none; }
+    .copy { cursor: copy; color: var(--aqua); text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px; }
+    .copy:hover { background: var(--aqua); color: var(--bg); }
+
+    .c-dim    { color: var(--dim); }
+    .c-bright { color: var(--bright); }
+    .c-purple { color: var(--purple); }
+    .c-aqua   { color: var(--aqua); }
+    .c-yellow { color: var(--yellow); }
+    .c-red    { color: var(--red); }
+    .c-green  { color: var(--green); }
+
+    /* command input line — the real input carries the native caret */
+    #inputline { display: flex; }
+    #prompt { white-space: pre; flex: none; }
+    #cmd {
+        flex: 1;
+        min-width: 4ch;
+        background: transparent;
+        border: none;
+        outline: none;
+        color: var(--bright);
+        font: inherit;
+        caret-color: var(--yellow);
+    }
+    @media (pointer: coarse) { #cmd { font-size: 16px; } } /* stop iOS zoom-on-focus */
+
+    pre.ascii {
+        font: inherit;
+        color: var(--aqua);
+        overflow-x: auto;
+        padding: 0.25rem 0;
+        line-height: 1.25;
+    }
+
+    .neofetch { display: flex; gap: 1.5ch; align-items: flex-start; padding: 0.25rem 0 0.25rem 0; }
+    .neofetch pre.ascii { padding: 0; }
+
+    .footer {
+        max-width: 82ch;
+        margin: 2rem auto 0;
+        color: var(--dim);
+        font-size: 13px;
+    }
+    .footer span { color: var(--fg); }
+
+    @media (max-width: 640px) {
+        body { padding: 0.75rem; font-size: 14px; }
+        .footer { margin-top: 1.5rem; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .line { animation: none; }
+        .line.fading { transition: none; }
+    }
+</style>
+</head>
+<body>
+
+<main class="term" id="term" aria-label="interactive terminal">
+    <div id="output" aria-live="polite">
+        <!-- boot lines get appended here -->
+    </div>
+
+    <form id="inputline" autocomplete="off" hidden>
+        <span id="prompt"></span><input id="cmd" type="text" name="cmd"
+            spellcheck="false" autocapitalize="off" autocorrect="off" aria-label="type a command">
+    </form>
+</main>
+
+<footer class="footer">
+    press <span>tab</span> to complete, type <span>help</span> for commands
+</footer>
+
+<script>
+// ============================================================
+//  EDIT HERE — all personal content lives in this one object
+// ============================================================
+const SITE = {
+    name: "Noa Butterfield",
+    handle: "wstr",
+    host: "westr42.xyz",
+
+    // TODO: finish this — use [text](url) to put links in the bio
+    bio: "HS student at [psii](https://psii.ca). arch linux user (btw). open source enjoyer & contributor",
+
+    links: [
+        { key: "email",     label: "email",     value: "me@westr42.xyz",        href: "mailto:me@westr42.xyz" },
+        { key: "discord",   label: "discord",   value: "westerneagle42" },                                    // no page — click copies it
+        { key: "github",    label: "github",    value: "github.com/Wester4253",  href: "https://github.com/Wester4253" },
+        { key: "instagram", label: "instagram", value: "@noa.apk",               href: "https://www.instagram.com/noa.apk" },
+    ],
+};
+// =============================================================
+
+const output    = document.getElementById("output");
+const inputline = document.getElementById("inputline");
+const promptEl  = document.getElementById("prompt");
+const cmd       = document.getElementById("cmd");
+const term      = document.getElementById("term");
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+// renders [text](url) from SITE.bio as a link — text is escaped first
+const md = s => esc(s).replace(
+    /\[([^\]]+)\]\(([^)\s]+)\)/g,
+    '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+
+// ---------- line rendering ----------
+function line(html, cls) {
+    const div = document.createElement("div");
+    div.className = "line" + (cls ? " " + cls : "");
+    div.innerHTML = html || "&nbsp;";
+    output.appendChild(div);
+    return div;
+}
+function textLine(t, cls) { return line(esc(t), cls); }
+
+// rows for the links list; linkless entries are click-to-copy
+function linkRows(items) {
+    const width = Math.max(...items.map(i => i.label.length)) + 2;
+    for (const i of items) {
+        const div = line("");
+        const head = document.createElement("span");
+        head.className = "c-purple";
+        head.textContent = i.label.padEnd(width) + " ";
+        div.appendChild(head);
+        if (i.href) {
+            const a = document.createElement("a");
+            a.textContent = i.value;
+            a.href = i.href;
+            a.target = "_blank";
+            a.rel = "noopener noreferrer";
+            a.title = "opens in new tab";
+            div.appendChild(a);
+        } else {
+            const s = document.createElement("span");
+            s.className = "copy";
+            s.textContent = i.value;
+            s.title = "click to copy";
+            s.addEventListener("click", () => copyText(i.value));
+            div.appendChild(s);
+        }
+    }
+}
+
+async function copyText(t) {
+    try {
+        await navigator.clipboard.writeText(t); // needs https or localhost
+        line(`<span class="c-yellow">copied:</span> <span class="c-dim">"${esc(t)}"</span>`);
+    } catch {
+        // file:// fallbacks
+        const ta = document.createElement("textarea");
+        ta.value = t;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand("copy");
+        ta.remove();
+        if (ok) line(`<span class="c-yellow">copied:</span> <span class="c-dim">"${esc(t)}"</span>`);
+        else line(`<span class="c-red">copy failed</span> <span class="c-dim">— it's <span class="c-bright">${esc(t)}</span></span>`);
+    }
+}
+
+// ---------- prompt + motd ----------
+document.title = `${SITE.handle}@${SITE.host}`;
+promptEl.innerHTML =
+    `<span class="c-purple">${esc(SITE.handle)}</span><span class="c-dim">@</span>` +
+    `<span class="c-aqua">${esc(SITE.host)}</span><span class="c-bright">:~$&nbsp;</span>`;
+
+function echoPrompt(t) {
+    line(`<span class="c-purple">${esc(SITE.handle)}</span><span class="c-dim">@</span><span class="c-aqua">${esc(SITE.host)}</span><span class="c-dim">:~$</span> <span class="c-bright">${esc(t)}</span>`);
+}
+
+// shown once, right after boot — name, bio, and the base commands
+const BASE_CMDS = ["links", "about", "email", "discord", "github", "instagram", "help"];
+
+function showMotd() {
+    line(`<span class="c-bright">${esc(SITE.name)}</span> <span class="c-dim">— ${esc(SITE.host)}</span>`);
+    line("&nbsp;");
+    line(md(SITE.bio));
+    line("&nbsp;");
+    const w = Math.max(...BASE_CMDS.map(c => c.length)) + 4;
+    for (const c of BASE_CMDS)
+        line(`<span class="c-purple">${esc(c.padEnd(w))}</span><span class="c-dim">${esc(HELP[c])}</span>`);
+    line("&nbsp;");
+    line(`full list with <span class="c-yellow">help</span>, or try <span class="c-yellow">neofetch</span> <span class="c-dim">— tab completes, ↑↓ recalls</span>`, "c-dim");
+    line("&nbsp;");
+}
+
+function showPrompt() {
+    if (inputline.hidden) {
+        inputline.hidden = false;
+        showMotd();
+        cmd.focus();
+    }
+}
+
+// ---------- boot sequence ----------
+// systemd-style: units type in one by one and stack up with green [ OK ],
+// then the whole stack fades out together and login/shell content fades in.
+const bootHead  = `${SITE.host} — tty1`;
+const bootUnits = ["personality.service", "links.service", "shell.service"];
+const bootLogin = [`login: ${SITE.handle}`, "password: ****"];
+
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+let skipBoot = false;
+
+addEventListener("keydown", () => { skipBoot = true; });   // any key ends boot early
+term.addEventListener("pointerdown", () => {
+    if (inputline.hidden) { skipBoot = true; }             // a tap stops the boot…
+    else cmd.focus();                                       // …then taps just focus the input
+});
+
+// instant finish: drop all the animated lines, keep only what persists
+function finishBootNow() {
+    output.replaceChildren();
+    textLine(bootHead, "c-bright");
+    for (const t of bootLogin) textLine(t, "c-dim");
+    showPrompt();
+}
+
+async function typeOut(t, cls) {
+    const el = textLine("", cls);
+    for (const ch of t) {
+        el.textContent += ch;
+        if (!skipBoot) await sleep(12);
+    }
+    return el;
+}
+
+async function boot() {
+    if (skipBoot || reduceMotion) return finishBootNow();
+
+    await typeOut(bootHead, "c-bright");
+    await sleep(120);
+
+    const oks = [];
+    for (const name of bootUnits) {
+        const el = await typeOut(name, "");
+        // re-tag with systemd colors and stack it below the previous ones
+        el.textContent = "";
+        el.insertAdjacentHTML("beforeend",
+            `<span class="c-green">[  OK  ]</span> <span class="c-dim">${esc(name)}</span>`);
+        oks.push(el);
+        await sleep(160);
+        if (skipBoot) return finishBootNow();
+    }
+
+    for (const el of oks) el.classList.add("fading"); // fade the stack together…
+    await sleep(430);
+    for (const el of oks) el.remove();                // …then it's gone
+
+    for (const [i, t] of bootLogin.entries()) {       // login + shell fade in
+        await typeOut(t, "c-dim");
+        if (i === 0) await sleep(140);
+    }
+    showPrompt();
+}
+
+// ---------- built-in commands ----------
+const commands = {
+    help() {
+        line(`<span class="c-bright">commands</span> <span class="c-dim">(tab completes, ↑↓ recalls history)</span>`);
+        const w = Math.max(...Object.keys(HELP).map(c => c.length)) + 4;
+        for (const [c, d] of Object.entries(HELP))
+            line(`<span class="c-purple">${esc(c.padEnd(w))}</span><span class="c-dim">${esc(d)}</span>`);
+    },
+
+    whoami() {
+        line(`<span class="c-bright">${esc(SITE.name)}</span>`);
+        line(md(SITE.bio), "c-dim");
+    },
+
+    about() { line(md(SITE.bio)); },
+
+    links()   { line("&nbsp;"); linkRows(SITE.links); line("&nbsp;"); },
+    contact() { commands.links(); },
+
+    email() {
+        const e = SITE.links.find(l => l.key === "email");
+        line(`write to <a href="${esc(e.href)}">${esc(e.value)}</a> <span class="c-dim">— opens your mail client</span>`);
+    },
+
+    discord() {
+        const d = SITE.links.find(l => l.key === "discord");
+        line(`discord: `);
+        const s = document.createElement("span");
+        s.className = "copy";
+        s.title = "click to copy";
+        s.textContent = d.value;
+        s.addEventListener("click", () => copyText(d.value));
+        output.lastElementChild.appendChild(s);
+    },
+
+    github() {
+        const g = SITE.links.find(l => l.key === "github");
+        line(`code lives at <a href="${esc(g.href)}" target="_blank" rel="noopener noreferrer">${esc(g.value)}</a>`);
+    },
+
+    instagram() {
+        const i = SITE.links.find(l => l.key === "instagram");
+        line(`photos at <a href="${esc(i.href)}" target="_blank" rel="noopener noreferrer">instagram.com/${esc(i.value.slice(1))}</a>`);
+    },
+
+    projects() {
+        const g = SITE.links.find(l => l.key === "github");
+        line(`<span class="c-yellow">nothing to show yet.</span> <span class="c-dim">check <a href="${esc(g.href)}" target="_blank" rel="noopener noreferrer">github</a> later.</span>`);
+    },
+
+    ls() {
+        line(`about.txt  contact.txt  projects.txt`);
+    },
+
+    cat(args) {
+        const f = (args[0] || "").toLowerCase();
+        if (!f) return line(`<span class="c-red">cat:</span> missing operand <span class="c-dim">— see <span class="c-yellow">ls</span> for available files</span>`);
+        if (f === "about.txt")    return commands.about();
+        if (f === "contact.txt")  return commands.links();
+        if (f === "projects.txt") return commands.projects();
+        line(`<span class="c-red">cat:</span> ${esc(f)}: no such file or directory`);
+    },
+
+    clear() { output.replaceChildren(); },
+
+    echo(args) { line(esc(args.join(" "))); },
+
+    date() { line(esc(new Date().toString())); },
+
+    uname() { line(`<span class="c-bright">${esc(SITE.host)}</span> <span class="c-dim">5.15.0-arch1-1-btw x86_64 GNU/Linux</span>`); },
+
+    neofetch() {
+        const side = document.createElement("pre");
+        side.className = "ascii";
+        side.textContent =
+'      /\\\n' +
+'     /  \\\n' +
+'    /    \\\n' +
+'   /      \\\n' +
+'  /   __   \\\n' +
+' /   |  |   \\\n' +
+'/____|  |____\\';
+
+        const info = document.createElement("div");
+        info.className = "nf-info";
+        info.innerHTML = [
+            `<span class="c-purple">${esc(SITE.handle)}</span><span class="c-dim">@</span><span class="c-aqua">${esc(SITE.host)}</span>`,
+            `<span class="c-dim">──────────────────</span>`,
+            `<span class="c-dim">os:</span> arch linux <span class="c-aqua">(btw)</span>`,
+            `<span class="c-dim">school:</span> psii`,
+            `<span class="c-dim">shell:</span> this website`,
+            `<span class="c-dim">font:</span> monospace, obviously`,
+            `<span class="c-dim">links:</span> type <span class="c-yellow">links</span>`,
+        ].join("<br>");
+
+        const row = document.createElement("div");
+        row.className = "neofetch";
+        row.appendChild(side);
+        row.appendChild(info);
+        output.appendChild(row);
+        line("&nbsp;");
+    },
+};
+
+const HELP = {
+    help:      "this list",
+    neofetch:  "system info (mandatory)",
+    whoami:    "who i am",
+    about:     "short bio",
+    links:     "all ways to reach me",
+    email:     "send mail",
+    discord:   "copy my discord tag",
+    github:    "see my code",
+    instagram: "photos",
+    projects:  "(coming eventually)",
+    ls:        "list files",
+    "cat <f>": "read a file",
+    clear:     "wipe the screen",
+    echo:      "say it back",
+    date:      "current time",
+    uname:     "machine name",
+};
+
+// ---------- input handling ----------
+const history = [];
+let histIdx = 0;
+
+function scrollToBottom() {
+    requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
+}
+
+function run(raw) {
+    const trimmed = raw.trim();
+    echoPrompt(trimmed);
+    if (!trimmed) return;
+
+    history.push(trimmed);
+    histIdx = history.length;
+
+    const [name, ...args] = trimmed.split(/\s+/);
+    const key = name.toLowerCase();
+    const alias = { socials: "links", mail: "email", bio: "about", me: "whoami", ig: "instagram", gh: "github" };
+    const fn = commands[alias[key] || key];
+    if (fn) fn(args);
+    else line(`<span class="c-red">${esc(name)}:</span> command not found <span class="c-dim">— type <span class="c-yellow">help</span></span>`);
+}
+
+inputline.addEventListener("submit", e => {
+    e.preventDefault();
+    const value = cmd.value;
+    cmd.value = "";
+    inputline.remove();          // detach so new output lands below recent lines
+    run(value);
+    showPromptOnly();
+    output.appendChild(inputline);
+    scrollToBottom();
+    cmd.focus();
+});
+
+function showPromptOnly() {
+    inputline.hidden = false;
+}
+
+cmd.addEventListener("keydown", e => {
+    if (e.key === "ArrowUp") {
+        if (histIdx > 0) { histIdx--; cmd.value = history[histIdx]; }
+        e.preventDefault();
+    } else if (e.key === "ArrowDown") {
+        if (histIdx < history.length - 1) { histIdx++; cmd.value = history[histIdx]; }
+        else { histIdx = history.length; cmd.value = ""; }
+        e.preventDefault();
+    } else if (e.key === "Tab") {
+        e.preventDefault();
+        const words = cmd.value.trim().toLowerCase();
+        const names = [...Object.keys(commands), ...Object.keys(HELP).filter(k => / /.test(k))];
+        const hits = words ? names.filter(n => !/ /.test(n) && n.startsWith(words)) : names.filter(n => !/ /.test(n));
+        if (words && hits.length === 1) {
+            cmd.value = hits[0] + " ";
+        } else if (hits.length && words) {
+            line(`<span class="c-dim">${esc(hits.join("  "))}</span>`);
+            output.appendChild(inputline);
+            scrollToBottom();
+        }
+    }
+});
+
+// clicking anywhere in the terminal focuses the input (unless text is selected)
+term.addEventListener("click", () => {
+    if (inputline.hidden) return;
+    const sel = window.getSelection();
+    if (sel && sel.toString().length) return;
+    cmd.focus();
+});
+
+// typing anywhere on the page goes straight into the shell
+document.addEventListener("keydown", e => {
+    if (document.activeElement === cmd) return;          // already in the shell
+    if (e.ctrlKey || e.metaKey || e.altKey) return;      // don't eat browser shortcuts
+    const sel = window.getSelection();
+    if (sel && sel.toString().length) return;            // don't hijack copying text
+    if (e.key.length === 1 || ["Enter", "Backspace", "ArrowUp", "ArrowDown", "Tab"].includes(e.key)) {
+        cmd.focus(); // focus mid-keydown: chars land in the input from here on
+    }
+});
+
+boot();
+</script>
+</body>
+</html>
